@@ -65,10 +65,17 @@ if uploaded_file:
             df[final_drop_col] = df.apply(lambda r: 1 if r["总购药量"] > 0 and r[last_stock_col] == 0 else 0, axis=1)
             
             # --- 侧边栏交互：动态下钻控制逻辑 ---
-            pharmacies = ["全部药房"] + list(df["所属药房"].dropna().unique())
+            # 获取所有唯一的药房列表
+            all_pharmacies_list = list(df["所属药房"].dropna().unique())
             
             with st.sidebar:
-                selected_pharmacy = st.selectbox("1️⃣ 按药房下钻", pharmacies)
+                # 【核心修改】：将 selectbox 改为 multiselect，实现多选功能，默认全选
+                selected_pharmacies = st.multiselect(
+                    "1️⃣ 按药房下钻 (可多选)", 
+                    options=all_pharmacies_list,
+                    default=all_pharmacies_list
+                )
+                
                 status_filter = st.selectbox("2️⃣ 按患者状态过滤", ["显示所有人", "仅看已脱落患者", "仅看在治(活跃)患者"])
                 
                 # 如果选择看脱落患者，可以进一步下钻到具体月份
@@ -79,14 +86,20 @@ if uploaded_file:
             # 开始执行数据切片（下钻）
             view_df = df.copy()
             
-            # 药房过滤
-            if selected_pharmacy != "全部药房":
-                view_df = view_df[view_df["所属药房"] == selected_pharmacy]
+            # 药房多选过滤逻辑
+            if selected_pharmacies:
+                # 如果用户选了部分药房，用 isin 来匹配选中的多个药房
+                view_df = view_df[view_df["所属药房"].isin(selected_pharmacies)]
+                base_df = df[df["所属药房"].isin(selected_pharmacies)].copy()
+                pharmacy_label = ", ".join(selected_pharmacies)
+            else:
+                # 如果用户把多选框全部清空了，默认看“全部药房”
+                base_df = df.copy()
+                pharmacy_label = "全部药房 (未选择时默认全选)"
             
             # 状态过滤
             if status_filter == "仅看已脱落患者":
                 if specific_month == "全部月份":
-                    # 只要任何一个月脱落过，或者最终脱落了
                     all_drop_fields = list(drop_cols_map.values()) + [final_drop_col]
                     view_df = view_df[view_df[all_drop_fields].sum(axis=1) > 0]
                 elif specific_month in drop_cols_map:
@@ -97,10 +110,8 @@ if uploaded_file:
                 view_df = view_df[view_df[last_stock_col] > 0]
                 
             # --- 前端大屏渲染 ---
-            st.subheader(f"💯 核心流失指标总览 ({selected_pharmacy})")
+            st.subheader(f"💯 核心流失指标总览 ({pharmacy_label})")
             
-            # 大盘数字基于当前选择的药房（不受状态过滤影响，保证全局观）
-            base_df = df if selected_pharmacy == "全部药房" else df[df["所属药房"] == selected_pharmacy]
             total_patients = len(base_df)
             active_end = len(base_df[base_df[last_stock_col] > 0])
             total_dropped = base_df[final_drop_col].sum()
@@ -135,7 +146,7 @@ if uploaded_file:
                 text=[f"{r:.1%}" for r in [x/100 for x in trend_rates]], textposition="top center",
                 name='新增脱落率', line=dict(color='#E67E22', width=3)
             ))
-            fig.update_layout(title=f"{selected_pharmacy} - 各月动态新增脱落率走势", height=350, yaxis=dict(ticksuffix="%"))
+            fig.update_layout(title=f"所选药房 - 各月动态新增脱落率合并走势", height=350, yaxis=dict(ticksuffix="%"))
             
             chart_col, table_col = st.columns([3, 2])
             with chart_col:
@@ -151,19 +162,14 @@ if uploaded_file:
             
             # --- 下钻明细数据与双表格展现 ---
             st.subheader("📋 深度下钻明细数据中心")
+            st.info(f"💡 当前视图已联动过滤。已选药房：【{pharmacy_label}】 | 状态：【{status_filter}】 | 月份下钻：【{specific_month}】。共找到 {len(view_df)} 条记录。")
             
-            # 【修复行】：合并回单行，避免换行导致的代码被截断错误
-            st.info(f"💡 当前视图已联动过滤。药房：【{selected_pharmacy}】 | 状态：【{status_filter}】 | 月份下钻：【{specific_month}】。共找到 {len(view_df)} 条记录。")
-            
-            # 自动组合展示列
             drop_cols = [f"{m}月新增脱落" for m in months_nums[1:]] + [final_drop_col]
             stock_cols = [f"{m}月可用库存" for m in months_nums]
             
-            # 分离出精简版名单和完整版大表
             short_cols = ["患者姓名", "所属药房", final_drop_col] + [f"{m}月新增脱落" for m in months_nums[1:]]
             full_cols = ["患者姓名", "所属药房"] + buy_cols + stock_cols + drop_cols
             
-            # 使用网页标签（Tabs）实现多表切换
             tab1, tab2 = st.tabs(["🎯 快速追踪：仅看患者流失名单与对应药房", "🔍 深度审计：查看库存与购药完整大表"])
             
             def highlight_dropped(val):
@@ -253,7 +259,7 @@ if uploaded_file:
             st.download_button(
                 label=f"📥 导出当前筛选视图下的名单 (共 {len(view_df)} 人)",
                 data=excel_data,
-                file_name=f"{selected_pharmacy}_{status_filter}_明细报表.xlsx",
+                file_name=f"多药房筛选_明细报表.xlsx",
                 mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
             )
             
