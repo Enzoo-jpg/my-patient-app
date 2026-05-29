@@ -36,7 +36,7 @@ if uploaded_file:
             df = df_raw.copy()
             
             # --- 核心计算引擎 ---
-            # 1. 滚动可用库存
+            # 1. 滚动可用库存（按标准业务规则：患者每月消耗 1 盒）
             for i, m_num in enumerate(months_nums):
                 stock_col = f"{m_num}月可用库存"
                 buy_col = f"{m_num}月购药量"
@@ -46,12 +46,13 @@ if uploaded_file:
                     prev_stock_col = f"{months_nums[i-1]}月可用库存"
                     df[stock_col] = df.apply(lambda r: max(0, r[prev_stock_col] - 1) + r[buy_col], axis=1)
             
-            # 2. 每月新增脱落
+            # 2. 每月新增脱落严格判定（上月本店有药可用 且 本月无药可用）
             drop_cols_map = {}
             for i in range(1, len(months_nums)):
                 curr_m = months_nums[i]
                 prev_m = months_nums[i-1]
                 d_col = f"{curr_m}月新增脱落"
+                # 严格执行定义：上月库存 > 0（有药可用）且 本月库存 == 0（无药可用）
                 df[d_col] = df.apply(
                     lambda r: 1 if r[f"{prev_m}月可用库存"] > 0 and r[f"{curr_m}月可用库存"] == 0 else 0, axis=1
                 )
@@ -61,15 +62,13 @@ if uploaded_file:
             last_m = months_nums[-1]
             last_stock_col = f"{last_m}月可用库存"
             df["总购药量"] = df[buy_cols].sum(axis=1)
-            final_drop_col = f"截止{last_m}月真实脱落"
+            final_drop_col = f"截止{last_m}月最终脱落"
             df[final_drop_col] = df.apply(lambda r: 1 if r["总购药量"] > 0 and r[last_stock_col] == 0 else 0, axis=1)
             
             # --- 侧边栏交互：动态下钻控制逻辑 ---
-            # 获取所有唯一的药房列表
             all_pharmacies_list = list(df["所属药房"].dropna().unique())
             
             with st.sidebar:
-                # 【核心修改】：将 selectbox 改为 multiselect，实现多选功能，默认全选
                 selected_pharmacies = st.multiselect(
                     "1️⃣ 按药房下钻 (可多选)", 
                     options=all_pharmacies_list,
@@ -78,7 +77,6 @@ if uploaded_file:
                 
                 status_filter = st.selectbox("2️⃣ 按患者状态过滤", ["显示所有人", "仅看已脱落患者", "仅看在治(活跃)患者"])
                 
-                # 如果选择看脱落患者，可以进一步下钻到具体月份
                 specific_month = "全部月份"
                 if status_filter == "仅看已脱落患者":
                     specific_month = st.selectbox("3️⃣ 查看哪个月新增的脱落？", ["全部月份"] + list(drop_cols_map.keys()) + [f"截止{last_m}月最终脱落"])
@@ -88,12 +86,10 @@ if uploaded_file:
             
             # 药房多选过滤逻辑
             if selected_pharmacies:
-                # 如果用户选了部分药房，用 isin 来匹配选中的多个药房
                 view_df = view_df[view_df["所属药房"].isin(selected_pharmacies)]
                 base_df = df[df["所属药房"].isin(selected_pharmacies)].copy()
                 pharmacy_label = ", ".join(selected_pharmacies)
             else:
-                # 如果用户把多选框全部清空了，默认看“全部药房”
                 base_df = df.copy()
                 pharmacy_label = "全部药房 (未选择时默认全选)"
             
@@ -125,13 +121,18 @@ if uploaded_file:
             
             st.markdown("---")
             
-            # --- 月度动态趋势图表 ---
-            st.subheader("📈 月度动态新增脱落趋势分析")
+            # --- 月度趋势图表 ---
+            st.subheader("📈 月度脱落率趋势分析")
+            st.caption("💡 脱落率精准定义：[上月本店有药可用且本月无药可用用户数] / [上月本店有药可用用户数]")
+            
             trend_months, trend_rates, beg_counts, drop_counts = [], [], [], []
             for i in range(1, len(months_nums)):
                 curr_m = months_nums[i]
                 prev_m = months_nums[i-1]
+                
+                # 分母：上月本店有药可用用户数
                 beg_in_treatment = len(base_df[base_df[f"{prev_m}月可用库存"] > 0])
+                # 分子：上月有药可用且本月无药可用用户数
                 new_dropped = base_df[f"{curr_m}月新增脱落"].sum()
                 m_rate = new_dropped / beg_in_treatment if beg_in_treatment > 0 else 0
                 
@@ -144,17 +145,19 @@ if uploaded_file:
             fig.add_trace(go.Scatter(
                 x=trend_months, y=trend_rates, mode='lines+markers+text', 
                 text=[f"{r:.1%}" for r in [x/100 for x in trend_rates]], textposition="top center",
-                name='新增脱落率', line=dict(color='#E67E22', width=3)
+                name='月度脱落率', line=dict(color='#E67E22', width=3)
             ))
-            fig.update_layout(title=f"所选药房 - 各月动态新增脱落率合并走势", height=350, yaxis=dict(ticksuffix="%"))
+            fig.update_layout(title=f"所选药房 - 月度脱落率走势图", height=350, yaxis=dict(ticksuffix="%"))
             
             chart_col, table_col = st.columns([3, 2])
             with chart_col:
                 st.plotly_chart(fig, use_container_width=True)
             with table_col:
                 summary_df = pd.DataFrame({
-                    "月份": trend_months, "期初在治人数": beg_counts, "当月新增脱落": drop_counts,
-                    "当月动态脱落率": [f"{x/100:.1%}" for x in trend_rates]
+                    "月份": trend_months, 
+                    "上月有药可用用户数": beg_counts, 
+                    "上月有药且本月无药用户数": drop_counts,
+                    "月度脱落率": [f"{x/100:.1%}" for x in trend_rates]
                 })
                 st.dataframe(summary_df, use_container_width=True, hide_index=True)
                 
@@ -253,7 +256,6 @@ if uploaded_file:
                 wb.save(output)
                 return output.getvalue()
             
-            # 导出完整大表
             excel_data = get_styled_excel(view_df, full_cols)
             
             st.download_button(
