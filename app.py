@@ -8,14 +8,14 @@ from openpyxl.utils import get_column_letter
 
 # 1. 网页基础配置与全局命名
 st.set_page_config(page_title="脱落率计算工具", layout="wide")
-st.title("📊 脱落率计算工具（药房脱落患者下钻表）")
+st.title("📊 脱落率计算工具（医院/药房全链路下钻与流失预警系统）")
 st.markdown("---")
 
 # 2. 侧边栏：数据上传、标准模板下载与多维下钻筛选
 with st.sidebar:
     st.header("📂 数据中心")
     
-    # 按钮一：提供标准 Excel 模板下载，避免用户格式传错
+    # 提供标准 Excel 模板下载，避免用户格式传错
     st.markdown("##### ⬇️ 第一步：下载/核对标准格式")
     template_buffer = io.BytesIO()
     temp_wb = Workbook()
@@ -36,7 +36,7 @@ with st.sidebar:
     )
     st.markdown(" ")
     
-    # 按钮二：上传文件
+    # 上传文件
     uploaded_file = st.file_uploader("第二步：上传您填好的数据报表", type=["xlsx", "xls"])
     st.markdown("---")
     st.header("🎯 多维下钻漏斗")
@@ -116,9 +116,9 @@ if uploaded_file:
                 pharmacy_label = "全部药房 (未选择时默认全选)"
             
             # 状态过滤
+            all_drop_fields = list(drop_cols_map.values()) + [final_drop_col]
             if status_filter == "仅看已脱落患者":
                 if specific_month == "全部月份":
-                    all_drop_fields = list(drop_cols_map.values()) + [final_drop_col]
                     view_df = view_df[view_df[all_drop_fields].sum(axis=1) > 0]
                 elif specific_month in drop_cols_map:
                     view_df = view_df[view_df[drop_cols_map[specific_month]] == 1]
@@ -132,7 +132,7 @@ if uploaded_file:
             
             total_patients = len(base_df)
             active_end = len(base_df[base_df[last_stock_col] > 0])
-            total_dropped = base_df[final_drop_col].sum()
+            total_dropped = base_df[all_drop_fields].sum(axis=1).apply(lambda x: 1 if x > 0 else 0).sum()
             cum_drop_rate = total_dropped / total_patients if total_patients > 0 else 0
             
             kpi1, kpi2, kpi3, kpi4 = st.columns(4)
@@ -143,13 +143,12 @@ if uploaded_file:
             
             st.markdown("---")
             
-            # --- 月度趋势图表（新增购药人数维度） ---
+            # --- 月度趋势图表 ---
             st.subheader("📈 月度脱落率与实际购药表现趋势分析")
             st.caption("💡 脱落率精准定义：[上月本店有药可用且本月无药可用用户数] / [上月本店有药可用用户数]")
             
             trend_months, trend_rates, beg_counts, drop_counts, buy_counts = [], [], [], [] ,[]
             
-            # 针对第一个月，虽然无法计算脱落率，但我们统计其购药患者数，方便在表格中完整展现
             first_m = months_nums[0]
             first_m_buyers = len(base_df[base_df[f"{first_m}月购药量"] > 0])
             
@@ -157,13 +156,9 @@ if uploaded_file:
                 curr_m = months_nums[i]
                 prev_m = months_nums[i-1]
                 
-                # 分母：上月本店有药可用用户数
                 beg_in_treatment = len(base_df[base_df[f"{prev_m}月可用库存"] > 0])
-                # 分子：上月有药可用且本月无药可用用户数
                 new_dropped = base_df[f"{curr_m}月新增脱落"].sum()
                 m_rate = new_dropped / beg_in_treatment if beg_in_treatment > 0 else 0
-                
-                # 【新增】：统计当月有真实购药动作的患者数（购药量 > 0）
                 current_buyers = len(base_df[base_df[f"{curr_m}月购药量"] > 0])
                 
                 trend_months.append(f"{curr_m}月")
@@ -172,7 +167,6 @@ if uploaded_file:
                 drop_counts.append(new_dropped)
                 buy_counts.append(current_buyers)
             
-            # 绘制折线图
             fig = go.Figure()
             fig.add_trace(go.Scatter(
                 x=trend_months, y=trend_rates, mode='lines+markers+text', 
@@ -185,7 +179,6 @@ if uploaded_file:
             with chart_col:
                 st.plotly_chart(fig, use_container_width=True)
             with table_col:
-                # 组装联动表格，带上新要求的“当月购药患者数”
                 table_months = [f"{first_m}月"] + trend_months
                 table_beg = ["-"] + beg_counts
                 table_drop = ["-"] + drop_counts
@@ -194,7 +187,7 @@ if uploaded_file:
                 
                 summary_df = pd.DataFrame({
                     "月份": table_months, 
-                    "当月购药患者数": table_buyers,  # 👈 新增的一列
+                    "当月购药患者数": table_buyers,
                     "上月有药可用用户数": table_beg, 
                     "上月有药且本月无药用户数": table_drop,
                     "月度脱落率": table_rates
@@ -203,109 +196,4 @@ if uploaded_file:
                 
             st.markdown("---")
             
-            # --- 下钻明细数据与双表格展现 ---
-            st.subheader("📋 深度下钻明细数据中心")
-            st.info(f"💡 当前视图已联动过滤。已选药房：【{pharmacy_label}】 | 状态：【{status_filter}】 | 月份下钻：【{specific_month}】。共找到 {len(view_df)} 条记录。")
-            
-            drop_cols = [f"{m}月新增脱落" for m in months_nums[1:]] + [final_drop_col]
-            stock_cols = [f"{m}月可用库存" for m in months_nums]
-            
-            short_cols = ["患者姓名", "所属药房", final_drop_col] + [f"{m}月新增脱落" for m in months_nums[1:]]
-            full_cols = ["患者姓名", "所属药房"] + buy_cols + stock_cols + drop_cols
-            
-            tab1, tab2 = st.tabs(["🎯 快速追踪：仅看患者流失名单与对应药房", "🔍 深度审计：查看库存与购药完整大表"])
-            
-            def highlight_dropped(val):
-                return 'background-color: #FADBD8; color: #922B21; font-weight: bold;' if val == 1 else ''
-                
-            with tab1:
-                st.markdown("**这里只显示核心流失标记，方便你快速锁定药房和患者进行回访：**")
-                st.dataframe(view_df[short_cols].style.map(highlight_dropped, subset=[c for c in short_cols if "脱落" in c]), use_container_width=True)
-                
-            with tab2:
-                st.markdown("**这里包含购药量、可用库存等全量底层滚动计算轨迹：**")
-                st.dataframe(view_df[full_cols].style.map(highlight_dropped, subset=drop_cols), use_container_width=True)
-            
-            # --- 高级 Excel 导出 ---
-            st.markdown("### 📥 导出当前筛选后的明细报表")
-            
-            def get_styled_excel(data_df, cols):
-                output = io.BytesIO()
-                wb = Workbook()
-                ws = wb.active
-                ws.title = "下钻过滤明细"
-                ws.views.sheetView[0].showGridLines = True
-                
-                ws.append(cols)
-                font_header = Font(name="微软雅黑", size=11, bold=True, color="FFFFFF")
-                font_data = Font(name="微软雅黑", size=10)
-                font_alert = Font(name="微软雅黑", size=10, bold=True, color="9C0006")
-                
-                fill_header = PatternFill(start_color="1F497D", end_color="1F497D", fill_type="solid")
-                fill_buy = PatternFill(start_color="F2F2F2", end_color="F2F2F2", fill_type="solid")
-                fill_stock = PatternFill(start_color="E2EFDA", end_color="E2EFDA", fill_type="solid")
-                fill_alert = PatternFill(start_color="FFC7CE", end_color="FFC7CE", fill_type="solid")
-                
-                thin_border = Border(
-                    left=Side(style='thin', color='D9D9D9'), right=Side(style='thin', color='D9D9D9'),
-                    top=Side(style='thin', color='D9D9D9'), bottom=Side(style='thin', color='D9D9D9')
-                )
-                
-                for col_idx in range(1, len(cols) + 1):
-                    cell = ws.cell(row=1, column=col_idx)
-                    cell.font = font_header
-                    cell.fill = fill_header
-                    cell.alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
-                
-                for _, row_data in data_df[cols].iterrows():
-                    row_values = ["" if pd.isna(v) else v for v in row_data]
-                    ws.append(row_values)
-                    curr_row = ws.max_row
-                    
-                    for col_idx, col_name in enumerate(cols, start=1):
-                        cell = ws.cell(row=curr_row, column=col_idx)
-                        cell.font = font_data
-                        cell.border = thin_border
-                        
-                        if col_idx in [1, 2]:
-                            cell.alignment = Alignment(horizontal="left", vertical="center")
-                        else:
-                            cell.alignment = Alignment(horizontal="center", vertical="center")
-                        
-                        if "购药量" in col_name:
-                            cell.fill = fill_buy
-                        elif "可用库存" in col_name:
-                            cell.fill = fill_stock
-                        
-                        if ("新增脱落" in col_name or "真实脱落" in col_name) and cell.value == 1:
-                            cell.fill = fill_alert
-                            cell.font = font_alert
-                
-                ws.freeze_panes = "A2"
-                for col in ws.columns:
-                    max_len = 0
-                    col_letter = get_column_letter(col[0].column)
-                    for cell in col:
-                        if cell.value:
-                            val_str = str(cell.value)
-                            length = sum(2 if order > 127 else 1 for order in map(ord, val_str))
-                            if length > max_len:
-                                max_len = length
-                    ws.column_dimensions[col_letter].width = max(max_len + 3, 12)
-                
-                wb.save(output)
-                return output.getvalue()
-            
-            excel_data = get_styled_excel(view_df, full_cols)
-            
-            st.download_button(
-                label=f"📥 导出当前筛选视图下的名单 (共 {len(view_df)} 人)",
-                data=excel_data,
-                file_name=f"多药房筛选_明细报表.xlsx",
-                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-            )
-            
-    except Exception as e:
-        st.error(f"🚨 运行出错！请检查 Excel 格式是否规范。错误详情: {e}")
-else:
-    st.info("💡 期待您的数据：请在左侧侧边栏下载表头模板，填妥后上传即可开始分析。")
+            # --- 下钻明细数据与双
