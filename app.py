@@ -6,15 +6,38 @@ from openpyxl import Workbook
 from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
 from openpyxl.utils import get_column_letter
 
-# 1. 网页基础配置
-st.set_page_config(page_title="高级全链路脱落分析系统", layout="wide")
-st.title("📊 医院/药房患者全链路下钻分析与流失预警系统")
+# 1. 网页基础配置与全局命名
+st.set_page_config(page_title="脱落率计算工具", layout="wide")
+st.title("📊 脱落率计算工具（医院/药房全链路下钻与流失预警系统）")
 st.markdown("---")
 
-# 2. 侧边栏：数据上传与多维下钻筛选
+# 2. 侧边栏：数据上传、标准模板下载与多维下钻筛选
 with st.sidebar:
     st.header("📂 数据中心")
-    uploaded_file = st.file_uploader("第一步：上传原始报表", type=["xlsx", "xls"])
+    
+    # 按钮一：提供标准 Excel 模板下载，避免用户格式传错
+    st.markdown("##### ⬇️ 第一步：下载/核对标准格式")
+    template_buffer = io.BytesIO()
+    temp_wb = Workbook()
+    temp_ws = temp_wb.active
+    temp_ws.title = "标准格式示例"
+    temp_ws.views.sheetView[0].showGridLines = True
+    temp_ws.append(["患者姓名", "所属药房", "1月购药量", "2月购药量", "3月购药量"])
+    temp_ws.append(["张三", "北京第一药房", 1, 0, 1])
+    temp_ws.append(["李四", "上海中心药房", 2, 1, 0])
+    temp_wb.save(template_buffer)
+    
+    st.download_button(
+        label="📥 下载标准 Excel 表头模板",
+        data=template_buffer.getvalue(),
+        file_name="脱落率工具_标准表头模板.xlsx",
+        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        use_container_width=True
+    )
+    st.markdown(" ")
+    
+    # 按钮二：上传文件
+    uploaded_file = st.file_uploader("第二步：上传您填好的数据报表", type=["xlsx", "xls"])
     st.markdown("---")
     st.header("🎯 多维下钻漏斗")
     
@@ -46,13 +69,12 @@ if uploaded_file:
                     prev_stock_col = f"{months_nums[i-1]}月可用库存"
                     df[stock_col] = df.apply(lambda r: max(0, r[prev_stock_col] - 1) + r[buy_col], axis=1)
             
-            # 2. 每月新增脱落严格判定（上月本店有药可用 且 本月无药可用）
+            # 2. 每月新增脱落判定（上月本店有药可用 且 本月无药可用）
             drop_cols_map = {}
             for i in range(1, len(months_nums)):
                 curr_m = months_nums[i]
                 prev_m = months_nums[i-1]
                 d_col = f"{curr_m}月新增脱落"
-                # 严格执行定义：上月库存 > 0（有药可用）且 本月库存 == 0（无药可用）
                 df[d_col] = df.apply(
                     lambda r: 1 if r[f"{prev_m}月可用库存"] > 0 and r[f"{curr_m}月可用库存"] == 0 else 0, axis=1
                 )
@@ -121,11 +143,16 @@ if uploaded_file:
             
             st.markdown("---")
             
-            # --- 月度趋势图表 ---
-            st.subheader("📈 月度脱落率趋势分析")
+            # --- 月度趋势图表（新增购药人数维度） ---
+            st.subheader("📈 月度脱落率与实际购药表现趋势分析")
             st.caption("💡 脱落率精准定义：[上月本店有药可用且本月无药可用用户数] / [上月本店有药可用用户数]")
             
-            trend_months, trend_rates, beg_counts, drop_counts = [], [], [], []
+            trend_months, trend_rates, beg_counts, drop_counts, buy_counts = [], [], [], [] ,[]
+            
+            # 针对第一个月，虽然无法计算脱落率，但我们统计其购药患者数，方便在表格中完整展现
+            first_m = months_nums[0]
+            first_m_buyers = len(base_df[base_df[f"{first_m}月购药量"] > 0])
+            
             for i in range(1, len(months_nums)):
                 curr_m = months_nums[i]
                 prev_m = months_nums[i-1]
@@ -136,11 +163,16 @@ if uploaded_file:
                 new_dropped = base_df[f"{curr_m}月新增脱落"].sum()
                 m_rate = new_dropped / beg_in_treatment if beg_in_treatment > 0 else 0
                 
+                # 【新增】：统计当月有真实购药动作的患者数（购药量 > 0）
+                current_buyers = len(base_df[base_df[f"{curr_m}月购药量"] > 0])
+                
                 trend_months.append(f"{curr_m}月")
                 trend_rates.append(m_rate * 100)
                 beg_counts.append(beg_in_treatment)
                 drop_counts.append(new_dropped)
+                buy_counts.append(current_buyers)
             
+            # 绘制折线图
             fig = go.Figure()
             fig.add_trace(go.Scatter(
                 x=trend_months, y=trend_rates, mode='lines+markers+text', 
@@ -153,11 +185,19 @@ if uploaded_file:
             with chart_col:
                 st.plotly_chart(fig, use_container_width=True)
             with table_col:
+                # 组装联动表格，带上新要求的“当月购药患者数”
+                table_months = [f"{first_m}月"] + trend_months
+                table_beg = ["-"] + beg_counts
+                table_drop = ["-"] + drop_counts
+                table_rates = ["-"] + [f"{x/100:.1%}" for x in trend_rates]
+                table_buyers = [first_m_buyers] + buy_counts
+                
                 summary_df = pd.DataFrame({
-                    "月份": trend_months, 
-                    "上月有药可用用户数": beg_counts, 
-                    "上月有药且本月无药用户数": drop_counts,
-                    "月度脱落率": [f"{x/100:.1%}" for x in trend_rates]
+                    "月份": table_months, 
+                    "当月购药患者数": table_buyers,  # 👈 新增的一列
+                    "上月有药可用用户数": table_beg, 
+                    "上月有药且本月无药用户数": table_drop,
+                    "月度脱落率": table_rates
                 })
                 st.dataframe(summary_df, use_container_width=True, hide_index=True)
                 
@@ -268,4 +308,4 @@ if uploaded_file:
     except Exception as e:
         st.error(f"🚨 运行出错！请检查 Excel 格式是否规范。错误详情: {e}")
 else:
-    st.info("💡 期待您的数据：请在左侧侧边栏上传包含 '所属药房' 和各月购药量的 Excel 文件。")
+    st.info("💡 期待您的数据：请在左侧侧边栏下载表头模板，填妥后上传即可开始分析。")
