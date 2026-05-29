@@ -307,7 +307,7 @@ if uploaded_file:
                 dropped_only_df = base_df[base_df[all_drop_fields].sum(axis=1) > 0]
                 excel_data_dropped = get_styled_excel(dropped_only_df, full_cols, "脱落随访名单")
                 st.download_button(
-                    label=f"🚨 专属下载：【脱落流失患者精准回访名单】(共 {len(dropped_only_df)} 人)",
+                    label=f"🚨 脱落名单下载：【脱落流失患者精准回访名单】(共 {len(dropped_only_df)} 人)",
                     data=excel_data_dropped,
                     file_name=f"脱落流失患者精准回访名单.xlsx",
                     mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
