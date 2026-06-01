@@ -11,12 +11,12 @@ from openpyxl.utils import get_column_letter
 # 可以在下方自由修改/增加映射关系，左边为底表原始名称，右边为网页和报表展现的规范化简称
 # ==========================================
 STORES_MAPPING = {
-    "成都西三段药房(连锁）": "国药控股四川专业药房连锁有限公司金牛区一环路西三段药房",
-    "成都新都药房": "国药控股四川医药股份有限公司新都区民生巷药房",
-    "德阳关爱药房": "国药控股德阳有限公司泰山路关爱大药房",
-    "眉山药房": "国药控股四川医药股份有限公司眉山药房",
-    "雅安药房(连锁）": "国药控股四川专业药房连锁有限公司雅安药房",
-    "内江第二药房": "国药控股内江有限公司第二大药房",   
+    "国药控股四川专业药房连锁有限公司金牛区一环路西三段药房": "国药控股四川专业药房金牛店",
+    "国药控股四川医药股份有限公司新都区民生巷药房": "国药控股四川医药新都民生店",
+    "国药控股德阳有限公司泰山路关爱大药房": "国药控股德阳泰山路店",
+    "国药控股四川医药股份有限公司眉山药房": "国药控股四川医药眉山店",
+    "国药控股四川专业药房连锁有限公司雅安药房": "国药控股四川专业药房雅安店",
+    "国药控股内江有限公司第二大药房": "国药控股内江第二店",
     # "销售底表里的长名字": "您希望显示的短名字", 
 }
 
@@ -35,9 +35,9 @@ with st.sidebar:
     temp_ws = temp_wb.active
     temp_ws.title = "标准格式示例"
     temp_ws.views.sheetView[0].showGridLines = True
-    temp_ws.append(["省份", "门店ID", "患者姓名", "所属药房", "1月购药量", "2月购药量", "3月购药量"])
-    temp_ws.append(["四川省", 725587, "张三", "国药控股四川专业药房连锁有限公司金牛区一环路西三段药房", 1, 0, 1])
-    temp_ws.append(["四川省", 684290, "李四", "国药控股四川医药股份有限公司新都区民生巷药房", 2, 1, 0])
+    temp_ws.append(["省份", "患者姓名", "所属药房", "1月购药量", "2月购药量", "3月购药量"])
+    temp_ws.append(["四川省", "张三", "国药控股四川专业药房连锁有限公司金牛区一环路西三段药房", 1, 0, 1])
+    temp_ws.append(["四川省", "李四", "国药控股四川医药股份有限公司新都区民生巷药房", 2, 1, 0])
     temp_wb.save(template_buffer)
     
     st.download_button(
@@ -81,7 +81,7 @@ if uploaded_file:
             if actual_store_col == "门店":
                 df["所属药房"] = df["门店"]
             
-            # ⚡ 核心逻辑：执行药房名字映射净化
+            # 执行药房名字映射净化
             df["所属药房"] = df["所属药房"].replace(STORES_MAPPING)
             
             # --- 核心计算引擎 ---
@@ -222,7 +222,7 @@ if uploaded_file:
                 
             st.markdown("---")
             
-            # --- 多标签页展现：精简版门店运营大表 ---
+            # --- 多标签页展现 ---
             st.subheader("📋 深度分析与数据下钻明细中心")
             
             tab1, tab2, tab3 = st.tabs([
@@ -257,11 +257,9 @@ if uploaded_file:
                 prev_m_num = months_nums[months_nums.index(selected_m_num) - 1]
                 
                 prov_c = "省份" if "省份" in base_df.columns else None
-                id_c = "门店ID" if "门店ID" in base_df.columns else None
                 
                 store_groups = base_df.groupby("所属药房")
                 store_kpi_rows = []
-                mock_ids = [725587, 684290, 675354, 693009, 736594, 707059]
                 
                 for idx, (s_name, s_group) in enumerate(store_groups):
                     f_val = len(s_group[s_group[f"{prev_m_num}月可用库存"] > 0]) # 上个月有药用患者人数
@@ -269,11 +267,9 @@ if uploaded_file:
                     h_val = g_val / f_val if f_val > 0 else 0.0                # 当月脱落率
                     
                     p_val = s_group[prov_c].iloc[0] if (prov_c and not pd.isna(s_group[prov_c].iloc[0])) else "四川省"
-                    id_val = s_group[id_c].iloc[0] if (id_c and not pd.isna(s_group[id_c].iloc[0])) else mock_ids[idx % len(mock_ids)]
                     
                     store_kpi_rows.append({
                         "省份": p_val,
-                        "门店ID": id_val,
                         "门店": s_name,
                         "上个月有药用患者人数": f_val,
                         "上个月未继续在当月购买人数": g_val,
@@ -283,7 +279,7 @@ if uploaded_file:
                 store_kpi_df = pd.DataFrame(store_kpi_rows)
                 st.dataframe(store_kpi_df, use_container_width=True, hide_index=True)
                 
-                # 双层表头精简版专属 Excel 导出器
+                # 双层表头精简版专属 Excel 导出器 (已完美移除门店ID)
                 def get_kpi_excel_binary(kpi_df, m_str):
                     out = io.BytesIO()
                     wb = Workbook()
@@ -292,14 +288,13 @@ if uploaded_file:
                     ws.views.sheetView[0].showGridLines = True
                     
                     # 写入双行表头
-                    ws.append(["省份", "门店ID", "门店", f"26年{m_str}", "", ""])
-                    ws.append(["", "", "", "上个月有药用患者人数", "上个月未继续在当月购买人数", "当月脱落率"])
+                    ws.append(["省份", "门店", f"26年{m_str}", "", ""])
+                    ws.append(["", "", "上个月有药用患者人数", "上个月未继续在当月购买人数", "当月脱落率"])
                     
-                    # 合并前三列和第四大列
-                    ws.merge_cells("A1:A2")
-                    ws.merge_cells("B1:B2")
-                    ws.merge_cells("C1:C2")
-                    ws.merge_cells("D1:F1") 
+                    # 合并对应的单元格
+                    ws.merge_cells("A1:A2") # 省份
+                    ws.merge_cells("B1:B2") # 门店
+                    ws.merge_cells("C1:E1") # 26年5月 核心指标大通栏
                     
                     fill_blue_gray = PatternFill(start_color="8EA9DB", end_color="8EA9DB", fill_type="solid")
                     fill_yellow = PatternFill(start_color="FFFF00", end_color="FFFF00", fill_type="solid")
@@ -310,11 +305,11 @@ if uploaded_file:
                     )
                     
                     for r in [1, 2]:
-                        for c in range(1, 7):
+                        for c in range(1, 6):
                             cell = ws.cell(row=r, column=c)
                             cell.border = thin_border
                             cell.alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
-                            if c in [4, 5, 6]: # 核心数据明黄高亮
+                            if c in [3, 4, 5]: # 核心数据列明黄高亮
                                 cell.fill = fill_yellow
                                 cell.font = font_bold
                             else:
@@ -323,15 +318,15 @@ if uploaded_file:
                                 
                     for _, r_data in kpi_df.iterrows():
                         ws.append([
-                            r_data["省份"], r_data["门店ID"], r_data["门店"],
+                            r_data["省份"], r_data["门店"],
                             r_data["上个月有药用患者人数"], r_data["上个月未继续在当月购买人数"], r_data["当月脱落率"]
                         ])
                         curr_row = ws.max_row
-                        for c in range(1, 7):
+                        for c in range(1, 6):
                             cell = ws.cell(row=curr_row, column=c)
                             cell.font = Font(name="微软雅黑", size=10)
                             cell.border = thin_border
-                            if c in [1, 2, 3]:
+                            if c in [1, 2]:
                                 cell.alignment = Alignment(horizontal="left", vertical="center")
                             else:
                                 cell.alignment = Alignment(horizontal="center", vertical="center")
