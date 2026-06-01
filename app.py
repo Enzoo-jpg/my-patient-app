@@ -6,6 +6,20 @@ from openpyxl import Workbook
 from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
 from openpyxl.utils import get_column_letter
 
+# ==========================================
+# ⚙️ 👑 药房名称映射配置区 👑 ⚙️
+# 可以在下方自由修改/增加映射关系，左边为底表原始名称，右边为网页和报表展现的规范化简称
+# ==========================================
+STORES_MAPPING = {
+    "成都西三段药房(连锁)": "国药控股四川专业药房连锁有限公司金牛区一环路西三段药房",
+    "成都新都药房": "国药控股四川医药股份有限公司新都区民生巷药房",
+    "德阳关爱药房": "国药控股德阳有限公司泰山路关爱大药房",
+    "眉山药房": "国药控股四川医药股份有限公司眉山药房",
+    "雅安药房(连锁)": "国药控股四川专业药房连锁有限公司雅安药房",
+    "内江第二药房": "国药控股内江有限公司第二大药房",   
+    # "销售底表里的长名字": "您希望显示的短名字", 
+}
+
 # 1. 网页基础配置与全局命名
 st.set_page_config(page_title="脱落率计算工具", layout="wide")
 st.title("📊 脱落率计算工具（医院/药房全链路下钻与流失预警系统）")
@@ -15,16 +29,15 @@ st.markdown("---")
 with st.sidebar:
     st.header("📂 数据中心")
     
-    # 提供标准 Excel 模板下载，更新模板使其包含门店级运营管理维度
     st.markdown("##### ⬇️ 第一步：下载/核对标准格式")
     template_buffer = io.BytesIO()
     temp_wb = Workbook()
     temp_ws = temp_wb.active
     temp_ws.title = "标准格式示例"
     temp_ws.views.sheetView[0].showGridLines = True
-    temp_ws.append(["省份", "门店ID", "患者姓名", "所属药房", "2025年平均脱落率", "脱落率目标", "1月购药量", "2月购药量", "3月购药量"])
-    temp_ws.append(["四川省", 725587, "张三", "国药控股四川专业药房金牛店", 0.43, 0.14, 1, 0, 1])
-    temp_ws.append(["四川省", 684290, "李四", "国药控股四川医药新都民生店", 0.21, 0.00, 2, 1, 0])
+    temp_ws.append(["省份", "门店ID", "患者姓名", "所属药房", "1月购药量", "2月购药量", "3月购药量"])
+    temp_ws.append(["四川省", 725587, "张三", "国药控股四川专业药房连锁有限公司金牛区一环路西三段药房", 1, 0, 1])
+    temp_ws.append(["四川省", 684290, "李四", "国药控股四川医药股份有限公司新都区民生巷药房", 2, 1, 0])
     temp_wb.save(template_buffer)
     
     st.download_button(
@@ -64,9 +77,12 @@ if uploaded_file:
             st.error("❌ 格式错误：未检测到足够的购药量列（至少需要连续两个月的数据）。")
         else:
             df = df_raw.copy()
-            # 统一将门店列映射为“所属药房”供后台计算
+            # 统一将门店列映射为“所属药房”
             if actual_store_col == "门店":
                 df["所属药房"] = df["门店"]
+            
+            # ⚡ 核心逻辑：执行药房名字映射净化
+            df["所属药房"] = df["所属药房"].replace(STORES_MAPPING)
             
             # --- 核心计算引擎 ---
             # 1. 滚动可用库存（按标准业务规则：患者每月消耗 1 盒）
@@ -206,13 +222,13 @@ if uploaded_file:
                 
             st.markdown("---")
             
-            # --- 多标签页展现：加入新增的门店运营大表 ---
+            # --- 多标签页展现：精简版门店运营大表 ---
             st.subheader("📋 深度分析与数据下钻明细中心")
             
             tab1, tab2, tab3 = st.tabs([
                 "🎯 快速追踪：仅看患者流失名单与对应药房", 
                 "🔍 深度审计：查看库存与购药完整大表",
-                "🏪 运营大盘：门店级运营 KPI 汇报表（对齐图片排版）"
+                "🏪 运营大盘：门店级运营 KPI 汇报表"
             ])
             
             drop_cols = [f"{m}月新增脱落" for m in months_nums[1:]] + [final_drop_col]
@@ -234,117 +250,84 @@ if uploaded_file:
                 
             with tab3:
                 st.markdown("#### 📊 门店级运营核心数据大表")
-                # 用户选择需要生成KPI报告的月份
                 available_report_months = [f"{m}月" for m in months_nums[1:]]
                 selected_month_str = st.selectbox("📅 请选择要查看/汇报的运营月份：", available_report_months, index=len(available_report_months)-1)
                 
-                # 提取数字进行后台计算
                 selected_m_num = int(''.join(filter(str.isdigit, selected_month_str)))
                 prev_m_num = months_nums[months_nums.index(selected_m_num) - 1]
                 
-                # 安全读取或生成省份、门店ID、2025平均脱落率、脱落率目标等辅助维度
                 prov_c = "省份" if "省份" in base_df.columns else None
                 id_c = "门店ID" if "门店ID" in base_df.columns else None
-                rate2025_c = "2025年平均脱落率" if "2025年平均脱落率" in base_df.columns else None
-                target_c = "脱落率目标" if "脱落率目标" in base_df.columns else None
                 
-                # 按门店(所属药房)进行分组聚合
                 store_groups = base_df.groupby("所属药房")
                 store_kpi_rows = []
-                
-                # 预设几个经典的四川药房ID作为无数据时的智能美化占位符
                 mock_ids = [725587, 684290, 675354, 693009, 736594, 707059]
                 
                 for idx, (s_name, s_group) in enumerate(store_groups):
-                    f_val = len(s_group[s_group[f"{prev_m_num}月可用库存"] > 0]) # 上个月有药人数
-                    g_val = s_group[f"{selected_m_num}月新增脱落"].sum()          # 上月未继续在本月购买人数
-                    h_val = g_val / f_val if f_val > 0 else 0.0                # 脱落率
+                    f_val = len(s_group[s_group[f"{prev_m_num}月可用库存"] > 0]) # 上个月有药用患者人数
+                    g_val = s_group[f"{selected_m_num}月新增脱落"].sum()          # 上个月未继续在当月购买人数
+                    h_val = g_val / f_val if f_val > 0 else 0.0                # 当月脱落率
                     
-                    # 动态抓取或优雅兜底
                     p_val = s_group[prov_c].iloc[0] if (prov_c and not pd.isna(s_group[prov_c].iloc[0])) else "四川省"
                     id_val = s_group[id_c].iloc[0] if (id_c and not pd.isna(s_group[id_c].iloc[0])) else mock_ids[idx % len(mock_ids)]
-                    
-                    r2025 = s_group[rate2025_c].iloc[0] if (rate2025_c and not pd.isna(s_group[rate2025_c].iloc[0])) else 0.15
-                    r2025_str = f"{r2025:.0%}" if isinstance(r2025, (int, float)) else str(r2025)
-                    
-                    tgt_val = s_group[target_c].iloc[0] if (target_c and not pd.isna(s_group[target_c].iloc[0])) else (0.00 if idx == 1 else 0.14)
-                    tgt_str = f"{tgt_val:.0%}" if isinstance(tgt_val, (int, float)) else str(tgt_val)
                     
                     store_kpi_rows.append({
                         "省份": p_val,
                         "门店ID": id_val,
                         "门店": s_name,
-                        "2025年平均脱落率": r2025_str,
-                        "上个月有药人数": f_val,
-                        "上月未继续在本月购买人数": g_val,
-                        "脱落率": f"{h_val:.1%}",
-                        f"{selected_m_num}月新建档人数": "", # 遵照嘱托留空
-                        "脱落率目标": tgt_str
+                        "上个月有药用患者人数": f_val,
+                        "上个月未继续在当月购买人数": g_val,
+                        "当月脱落率": f"{h_val:.1%}"
                     })
                     
                 store_kpi_df = pd.DataFrame(store_kpi_rows)
-                
-                # 前端表格排版展示
                 st.dataframe(store_kpi_df, use_container_width=True, hide_index=True)
                 
-                # 针对该特定多层表头排版定义专属高级 Excel 导出函数
+                # 双层表头精简版专属 Excel 导出器
                 def get_kpi_excel_binary(kpi_df, m_str):
                     out = io.BytesIO()
                     wb = Workbook()
                     ws = wb.active
-                    ws.title = f"26年{m_str}运营汇报"
+                    ws.title = f"{m_str}运营汇报"
                     ws.views.sheetView[0].showGridLines = True
                     
                     # 写入双行表头
-                    ws.append(["省份", "门店ID", "门店", "2025年平均脱落率", f"26年{m_str}", "", "", f"{m_str}新建档人数", f"{m_str}脱落率目标"])
-                    ws.append(["", "", "", "", "上个月有药人数", "上月未继续在本月购买人数", "脱落率", "", ""])
+                    ws.append(["省份", "门店ID", "门店", f"26年{m_str}", "", ""])
+                    ws.append(["", "", "", "上个月有药用患者人数", "上个月未继续在当月购买人数", "当月脱落率"])
                     
-                    # 合并对应的双层单元格
+                    # 合并前三列和第四大列
                     ws.merge_cells("A1:A2")
                     ws.merge_cells("B1:B2")
                     ws.merge_cells("C1:C2")
-                    ws.merge_cells("D1:D2")
-                    ws.merge_cells("E1:G1") # 26年5月 横向合并
-                    ws.merge_cells("H1:H2")
-                    ws.merge_cells("I1:I2")
+                    ws.merge_cells("D1:F1") 
                     
-                    # 样式色彩定义
                     fill_blue_gray = PatternFill(start_color="8EA9DB", end_color="8EA9DB", fill_type="solid")
                     fill_yellow = PatternFill(start_color="FFFF00", end_color="FFFF00", fill_type="solid")
-                    
                     font_bold = Font(name="微软雅黑", size=10, bold=True, color="000000")
-                    font_red_bold = Font(name="微软雅黑", size=10, bold=True, color="FF0000")
-                    
                     thin_border = Border(
                         left=Side(style='thin', color='D9D9D9'), right=Side(style='thin', color='D9D9D9'),
                         top=Side(style='thin', color='D9D9D9'), bottom=Side(style='thin', color='D9D9D9')
                     )
                     
-                    # 渲染表头样式（1-2行）
                     for r in [1, 2]:
-                        for c in range(1, 10):
+                        for c in range(1, 7):
                             cell = ws.cell(row=r, column=c)
                             cell.border = thin_border
                             cell.alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
-                            if c in [5, 6, 7, 8]: # 5月核心计算列明黄高亮
+                            if c in [4, 5, 6]: # 核心数据明黄高亮
                                 cell.fill = fill_yellow
                                 cell.font = font_bold
-                            elif c == 9:        # 目标列蓝灰底红字
-                                cell.fill = fill_blue_gray
-                                cell.font = font_red_bold
                             else:
                                 cell.fill = fill_blue_gray
                                 cell.font = font_bold
                                 
-                    # 填充数据体
                     for _, r_data in kpi_df.iterrows():
                         ws.append([
-                            r_data["省份"], r_data["门店ID"], r_data["门店"], r_data["2025年平均脱落率"],
-                            r_data["上个月有药人数"], r_data["上月未继续在本月购买人数"], r_data["脱落率"],
-                            r_data[f"{m_str}新建档人数"], r_data["脱落率目标"]
+                            r_data["省份"], r_data["门店ID"], r_data["门店"],
+                            r_data["上个月有药用患者人数"], r_data["上个月未继续在当月购买人数"], r_data["当月脱落率"]
                         ])
                         curr_row = ws.max_row
-                        for c in range(1, 10):
+                        for c in range(1, 7):
                             cell = ws.cell(row=curr_row, column=c)
                             cell.font = Font(name="微软雅黑", size=10)
                             cell.border = thin_border
@@ -352,12 +335,7 @@ if uploaded_file:
                                 cell.alignment = Alignment(horizontal="left", vertical="center")
                             else:
                                 cell.alignment = Alignment(horizontal="center", vertical="center")
-                            
-                            # 如果目标是0%，高亮标红加粗
-                            if c == 9 and cell.value == "0%":
-                                cell.font = Font(name="微软雅黑", size=10, color="FF0000", bold=True)
                                 
-                    # 自动调整列宽
                     for col in ws.columns:
                         max_len = 0
                         col_letter = get_column_letter(col[0].column)
@@ -374,7 +352,7 @@ if uploaded_file:
                 kpi_excel_data = get_kpi_excel_binary(store_kpi_df, selected_month_str)
                 st.markdown(" ")
                 st.download_button(
-                    label=f"📊 导出【{selected_month_str} 门店级运营 KPI 汇报大表】（带排版格式）",
+                    label=f"📊 导出【{selected_month_str} 门店级运营 KPI 汇报大表】",
                     data=kpi_excel_data,
                     file_name=f"门店级运营KPI汇报表_{selected_month_str}.xlsx",
                     mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
@@ -383,10 +361,9 @@ if uploaded_file:
 
             st.markdown("---")
             
-            # --- 高级 Excel 导出功能区（原全量/流失患者按钮保持不变） ---
+            # --- 数据智能导出中心（明细数据） ---
             st.markdown("### 📥 数据智能导出中心（明细数据）")
             
-            # 基础明细 Excel 样式生成引擎
             def get_styled_excel(data_df, cols, title_name="下钻过滤明细"):
                 output = io.BytesIO()
                 wb = Workbook()
@@ -454,7 +431,6 @@ if uploaded_file:
                 wb.save(output)
                 return output.getvalue()
             
-            # 并排渲染两个功能不同的下载按钮
             btn_col1, btn_col2 = st.columns(2)
             
             with btn_col1:
