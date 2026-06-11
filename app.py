@@ -22,7 +22,7 @@ STORES_MAPPING = {
 
 # 1. 网页基础配置与全局命名
 st.set_page_config(page_title="脱落率计算工具", layout="wide")
-st.title("📊 脱落率计算工具（医院/药房全链路下钻与流失预警系统）")
+st.title("📊 脱落率计算工具（适用拜耳、艾伯维）")
 st.markdown("---")
 
 # 2. 侧边栏：数据上传、标准模板下载与多维下钻筛选
